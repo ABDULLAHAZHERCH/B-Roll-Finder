@@ -117,8 +117,10 @@ downloaded_broll/
 The app intentionally saves original provider videos. It does not trim, transcode, or re-encode clips because FFmpeg is not required by this project.
 
 For the published Streamlit app, this folder is inside the app's hosted server and is
-not a folder on your computer. After downloading, use the **Download all clips as ZIP**
-button or the individual clip download buttons to save the videos locally.
+not a folder on your computer. After the server finishes collecting the clips, use the
+**Download all clips to my computer** button to save one ZIP file to your local
+filesystem through the browser. The app cannot write directly to a user's local
+filesystem for security reasons.
 
 When multiple clips are requested for one line, the app alternates providers in this
 order: Pexels, Pixabay, Pexels, Pixabay. If the requested provider has no matching

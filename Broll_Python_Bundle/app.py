@@ -317,35 +317,18 @@ def download_all_clips(results: list[dict], download_dir: str) -> tuple[Path, li
     return download_path, downloaded_files
 
 
-def render_download_options(download_path: Path, downloaded_files: list[Path]) -> None:
-    """Expose server-side downloads through the browser."""
+def prepare_download_archive(download_path: Path, downloaded_files: list[Path]) -> None:
+    """Store a completed run as a browser-downloadable ZIP in session state."""
     if not downloaded_files:
+        st.session_state.download_archive = None
         return
 
-    st.info(
-        "These files were saved in the app's hosted environment. "
-        "Use the browser download buttons below to save them to your device."
-    )
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for file_path in downloaded_files:
             zip_file.write(file_path, arcname=file_path.name)
-    st.download_button(
-        "Download all clips as ZIP",
-        data=archive.getvalue(),
-        file_name=f"broll_run_{download_path.name}.zip",
-        mime="application/zip",
-        key=f"download_zip_{download_path.name}",
-        width="stretch",
-    )
-    for file_path in downloaded_files:
-        st.download_button(
-            f"Download {file_path.name}",
-            data=file_path.read_bytes(),
-            file_name=file_path.name,
-            mime="video/mp4",
-            key=f"download_clip_{download_path.name}_{file_path.name}",
-        )
+    st.session_state.download_archive = archive.getvalue()
+    st.session_state.download_archive_name = f"broll_run_{download_path.name}.zip"
 
 # --- UI WORKFLOW ---
 
@@ -361,6 +344,8 @@ script_text = st.text_area(
 if "results" not in st.session_state:
     st.session_state.results = []
 st.session_state.setdefault("auto_download_pending", False)
+st.session_state.setdefault("download_archive", None)
+st.session_state.setdefault("download_archive_name", "broll_clips.zip")
 
 col1, col2 = st.columns([1, 4])
 with col1:
@@ -380,6 +365,7 @@ if search_button and script_text.strip():
 
     lines = split_script_into_scenes(script_text)
     st.session_state.results = []
+    st.session_state.download_archive = None
     progress_bar = st.progress(0)
     status = st.empty()
     gemini_queries = generate_gemini_queries(tuple(lines), gemini_key) if use_gemini else ()
@@ -441,14 +427,28 @@ if st.session_state.results:
                     st.video(clip["download_url"])
                     st.markdown(f"[Direct MP4 Link]({clip['download_url']})")
 
-    # 3. Auto-Download to Local Disk
+    # 3. Prepare one browser download for all clips
     st.divider()
-    if st.button("Download all found clips", type="secondary"):
+    if st.button("Prepare all clips for download", type="secondary"):
         download_path, downloaded_files = download_all_clips(st.session_state.results, download_dir)
-        render_download_options(download_path, downloaded_files)
+        prepare_download_archive(download_path, downloaded_files)
 
     if st.session_state.auto_download_pending:
         st.session_state.auto_download_pending = False
         st.info("Auto-download enabled: saving original provider videos...")
         download_path, downloaded_files = download_all_clips(st.session_state.results, download_dir)
-        render_download_options(download_path, downloaded_files)
+        prepare_download_archive(download_path, downloaded_files)
+
+    if st.session_state.download_archive:
+        st.info(
+            "The clips are temporarily stored in the app server. "
+            "Click the button below to download one ZIP file to your computer."
+        )
+        st.download_button(
+            "Download all clips to my computer",
+            data=st.session_state.download_archive,
+            file_name=st.session_state.download_archive_name,
+            mime="application/zip",
+            key="download_all_clips_zip",
+            width="stretch",
+        )

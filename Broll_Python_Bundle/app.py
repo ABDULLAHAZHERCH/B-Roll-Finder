@@ -1,6 +1,8 @@
 import os
 import json
 import re
+import io
+import zipfile
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -181,7 +183,7 @@ def search_pixabay(query: str, count: int, api_key: str):
 
 
 def search_scene_clips(queries: list[dict], orientation: str, pexels_key: str, pixabay_key: str) -> list[dict]:
-    """Search every scene query across all configured providers and deduplicate clips."""
+    """Search every scene query and alternate providers for each requested slot."""
     clips = []
     seen = set()
     jobs = []
@@ -205,14 +207,35 @@ def search_scene_clips(queries: list[dict], orientation: str, pexels_key: str, p
 
     with ThreadPoolExecutor(max_workers=min(8, len(jobs) or 1)) as executor:
         futures = [(source, query, executor.submit(search)) for source, query, search in jobs]
-        for source, query, future in futures:
-            results = future.result()
-            for clip in results:
-                clip_key = (clip["source"], clip["id"], clip["download_url"])
-                if clip_key not in seen:
-                    seen.add(clip_key)
-                    clip["search_query"] = query
-                    clips.append(clip)
+        provider_results = {
+            (source, query): future.result()
+            for source, query, future in futures
+        }
+
+    for query_item in queries:
+        query = query_item["query"]
+        clip_count = query_item["clip_count"]
+        available = {
+            source: list(provider_results.get((source, query), []))
+            for source in ("Pexels", "Pixabay")
+        }
+        for slot in range(clip_count):
+            preferred_source = "Pexels" if slot % 2 == 0 else "Pixabay"
+            source_order = (preferred_source, "Pixabay" if preferred_source == "Pexels" else "Pexels")
+            selected = None
+            for source in source_order:
+                while available[source]:
+                    candidate = available[source].pop(0)
+                    clip_key = (candidate["source"], candidate["id"], candidate["download_url"])
+                    if clip_key not in seen:
+                        seen.add(clip_key)
+                        candidate["search_query"] = query
+                        selected = candidate
+                        break
+                if selected:
+                    break
+            if selected:
+                clips.append(selected)
     return clips
 
 
@@ -248,7 +271,7 @@ def next_download_folder(download_dir: str) -> Path:
     return run_folder
 
 
-def download_all_clips(results: list[dict], download_dir: str) -> None:
+def download_all_clips(results: list[dict], download_dir: str) -> tuple[Path, list[Path]]:
     """Download one script run into its own numbered folder."""
     download_path = next_download_folder(download_dir)
 
@@ -265,15 +288,17 @@ def download_all_clips(results: list[dict], download_dir: str) -> None:
     total_clips = len(download_jobs)
     completed = 0
     failures = []
+    downloaded_files = []
     with ThreadPoolExecutor(max_workers=min(4, total_clips or 1)) as executor:
         futures = {
-            executor.submit(download_file_stream, clip["download_url"], file_dest): clip
+            executor.submit(download_file_stream, clip["download_url"], file_dest): (clip, file_dest)
             for clip, file_dest in download_jobs
         }
-        for future, clip in futures.items():
+        for future, (clip, file_dest) in futures.items():
             d_status.text(f"Downloading {clip['source']} clip {clip['id']}...")
             try:
                 future.result()
+                downloaded_files.append(file_dest)
             except Exception as error:
                 failures.append(f"{clip['id']}: {error}")
             completed += 1
@@ -289,6 +314,38 @@ def download_all_clips(results: list[dict], download_dir: str) -> None:
         )
     else:
         d_status.success(f"All {total_clips} clips downloaded to `{download_path.resolve()}`")
+    return download_path, downloaded_files
+
+
+def render_download_options(download_path: Path, downloaded_files: list[Path]) -> None:
+    """Expose server-side downloads through the browser."""
+    if not downloaded_files:
+        return
+
+    st.info(
+        "These files were saved in the app's hosted environment. "
+        "Use the browser download buttons below to save them to your device."
+    )
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in downloaded_files:
+            zip_file.write(file_path, arcname=file_path.name)
+    st.download_button(
+        "Download all clips as ZIP",
+        data=archive.getvalue(),
+        file_name=f"broll_run_{download_path.name}.zip",
+        mime="application/zip",
+        key=f"download_zip_{download_path.name}",
+        width="stretch",
+    )
+    for file_path in downloaded_files:
+        st.download_button(
+            f"Download {file_path.name}",
+            data=file_path.read_bytes(),
+            file_name=file_path.name,
+            mime="video/mp4",
+            key=f"download_clip_{download_path.name}_{file_path.name}",
+        )
 
 # --- UI WORKFLOW ---
 
@@ -387,9 +444,11 @@ if st.session_state.results:
     # 3. Auto-Download to Local Disk
     st.divider()
     if st.button("Download all found clips", type="secondary"):
-        download_all_clips(st.session_state.results, download_dir)
+        download_path, downloaded_files = download_all_clips(st.session_state.results, download_dir)
+        render_download_options(download_path, downloaded_files)
 
     if st.session_state.auto_download_pending:
         st.session_state.auto_download_pending = False
         st.info("Auto-download enabled: saving original provider videos...")
-        download_all_clips(st.session_state.results, download_dir)
+        download_path, downloaded_files = download_all_clips(st.session_state.results, download_dir)
+        render_download_options(download_path, downloaded_files)

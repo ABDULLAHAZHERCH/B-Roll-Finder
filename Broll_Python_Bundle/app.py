@@ -41,7 +41,7 @@ use_gemini = st.sidebar.checkbox(
     disabled=not gemini_key,
     help="Disabled by default for maximum speed. When enabled, Gemini makes one request per script, not one per line.",
 )
-clips_per_line = st.sidebar.slider("Clips per line", min_value=1, max_value=12, value=2)
+clips_per_line = st.sidebar.slider("Clips per line", min_value=1, max_value=30, value=2)
 aspect_ratio = st.sidebar.selectbox(
     "Aspect ratio",
     ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "9:21"],

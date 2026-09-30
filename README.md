@@ -21,7 +21,7 @@ The engine turns each sentence or line into a stock-video search, searches Pexel
   - `3:4`
   - `21:9`
   - `9:21`
-- Up to 12 clips per scene
+- Up to 30 clips per scene
 - In-browser video previews and direct MP4 links
 - Optional automatic downloading
 - Manual download-all action
